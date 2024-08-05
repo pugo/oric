@@ -94,34 +94,9 @@ void Machine::init(Frontend* frontend)
 {
     this->frontend = frontend;
     init_cpu();
-    mos_6522 = new MOS6522(*this);
-    ay3 = new AY3_8912(*this);
-
-    if (! oric->get_config().tape_path().empty()) {
-        tape = new TapeTap(*mos_6522, oric->get_config().tape_path());
-        if (!tape->init()) {
-            exit(1);
-        }
-    }
-    else {
-        std::cout << "No tape specified." << std::endl;
-        tape = new TapeBlank();
-    }
-
-    // AY data bus reads from VIA ORA (Output Register A).
-    ay3->m_read_data_handler = read_via_ora;
-    //	ay3->m_write_data_handler = write_vi
-
-    // CA1 is connected to printer ACK line.
-    // -- printer not supported.
-
-    // CA2 is connected to AY BC1 line.
-    mos_6522->ca2_changed_handler = AY3_8912::set_bc1;
-
-    // CB1 is connected to tape connector input, tape_tap.cpp writes directly to CB1.
-
-    // CB2 is connected to AY BDIR line.
-    mos_6522->cb2_changed_handler = AY3_8912::set_bdir;
+    init_mos6522();
+    init_ay3();
+    init_tape();
 
     for (uint8_t i=0; i < 64; ++i) {
         if (keytab[i] != 0) {
@@ -139,6 +114,45 @@ void Machine::init_cpu()
     cpu->memory_read_word_zp_handler = read_word_zp;
     cpu->memory_write_byte_handler = write_byte;
     cpu->memory_write_byte_zp_handler = write_byte_zp;
+}
+
+void Machine::init_mos6522()
+{
+    mos_6522 = new MOS6522(*this);
+
+    // CA1 is connected to printer ACK line.
+    // -- printer not supported.
+
+    // CA2 is connected to AY BC1 line.
+    mos_6522->ca2_changed_handler = AY3_8912::set_bc1;
+
+    // CB1 is connected to tape connector input, tape_tap.cpp writes directly to CB1.
+
+    // CB2 is connected to AY BDIR line.
+    mos_6522->cb2_changed_handler = AY3_8912::set_bdir;
+}
+
+void Machine::init_ay3()
+{
+    ay3 = new AY3_8912(*this);
+
+    // AY data bus reads from VIA ORA (Output Register A).
+    ay3->m_read_data_handler = read_via_ora;
+    //	ay3->m_write_data_handler = write_vi
+}
+
+void Machine::init_tape()
+{
+    if (! oric->get_config().tape_path().empty()) {
+        tape = new TapeTap(*mos_6522, oric->get_config().tape_path());
+        if (!tape->init()) {
+            exit(1);
+        }
+    }
+    else {
+        std::cout << "No tape specified." << std::endl;
+        tape = new TapeBlank();
+    }
 }
 
 void Machine::reset()

@@ -46,7 +46,11 @@ public:
     virtual ~Machine();
 
     void init(Frontend* frontend);
+
     void init_cpu();
+    void init_mos6522();
+    void init_ay3();
+    void init_tape();
 
     void reset();
     void run(uint32_t steps, Oric* oric);

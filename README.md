@@ -53,6 +53,7 @@ All building instructions are located in the `doc` directory.
  * To build with vcpkg, see [doc/BUILD_VCPKG.md](doc/BUILD_VCPKG.md).
  * To build with host libraries, see [doc/BUILD_HOST.md](doc/BUILD_HOST.md).
  * To build on Windows, see [doc/BUILD_WINDOWS.md](doc/BUILD_WINDOWS.md).
+ * Release package details are in [doc/BUILD_RELEASES.md](doc/BUILD_RELEASES.md).
 
 ## Running
 

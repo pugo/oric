@@ -26,9 +26,28 @@ env:
   VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.vcpkg-cache
 
 jobs:
-  linux:
-    name: Linux release
-    runs-on: ubuntu-latest
+  build:
+    name: ${{ matrix.name }} release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            triplet: x64-linux
+            package_suffix: linux-x64
+            archive_extension: tar.gz
+          - name: macOS
+            os: macos-latest
+            triplet: arm64-osx
+            package_suffix: macos-arm64
+            archive_extension: zip
+          - name: Windows
+            os: windows-latest
+            triplet: x64-windows
+            package_suffix: windows-x64
+            archive_extension: zip
 
     steps:
       - name: Check out repository
@@ -55,11 +74,12 @@ jobs:
           path: |
             ${{ env.VCPKG_ROOT }}
             ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
+          key: ${{ runner.os }}-${{ matrix.triplet }}-vcpkg-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            ${{ runner.os }}-vcpkg-
+            ${{ runner.os }}-${{ matrix.triplet }}-vcpkg-
 
       - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
         run: >
           sudo apt-get update &&
           sudo apt-get install -y
@@ -84,12 +104,14 @@ jobs:
           libxtst-dev
 
       - name: Select Linux compiler
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           echo "CC=gcc-14" >> "$GITHUB_ENV"
           echo "CXX=g++-14" >> "$GITHUB_ENV"
 
       - name: Install vcpkg
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
@@ -102,13 +124,26 @@ jobs:
           mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
           "$VCPKG_ROOT/bootstrap-vcpkg.sh"
 
+      - name: Install vcpkg
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:VCPKG_ROOT/.git")) {
+            Remove-Item -Recurse -Force "$env:VCPKG_ROOT" -ErrorAction SilentlyContinue
+            git clone https://github.com/microsoft/vcpkg.git "$env:VCPKG_ROOT"
+          } else {
+            git -C "$env:VCPKG_ROOT" pull --ff-only
+          }
+          New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
+          & "$env:VCPKG_ROOT/bootstrap-vcpkg.bat"
+
       - name: Configure CMake
         run: >
           cmake
           -S .
           -B build
           -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake
-          -DVCPKG_TARGET_TRIPLET=x64-linux
+          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
           -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
@@ -117,26 +152,79 @@ jobs:
       - name: Test
         run: ctest --test-dir build --build-config Release --output-on-failure
 
-      - name: Stage package
+      - name: Stage Linux package
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
           version="${{ inputs.version }}"
-          package_name="auric-${version}-linux-x64"
+          package_name="auric-${version}-${{ matrix.package_suffix }}"
           package_dir="dist/${package_name}"
           cmake --install build --config Release --prefix "$package_dir" --strip
           ldd "$package_dir/bin/auric"
           tar -czf "dist/${package_name}.tar.gz" -C dist "$package_name"
           tar -tzf "dist/${package_name}.tar.gz"
 
+      - name: Stage macOS package
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ inputs.version }}"
+          package_name="auric-${version}-${{ matrix.package_suffix }}"
+          package_dir="dist/${package_name}"
+          cmake --install build --config Release --prefix "$package_dir" --strip
+          file "$package_dir/bin/auric"
+          otool -L "$package_dir/bin/auric"
+          ditto -c -k --sequesterRsrc --keepParent "$package_dir" "dist/${package_name}.zip"
+          unzip -l "dist/${package_name}.zip"
+
+      - name: Stage Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.version }}"
+          $packageName = "auric-$version-${{ matrix.package_suffix }}"
+          $packageDir = Join-Path "dist" $packageName
+          cmake --install build --config Release --prefix $packageDir
+
+          $vcpkgBin = Join-Path "build/vcpkg_installed/${{ matrix.triplet }}" "bin"
+          if (Test-Path $vcpkgBin) {
+            Copy-Item (Join-Path $vcpkgBin "*.dll") (Join-Path $packageDir "bin") -ErrorAction SilentlyContinue
+          }
+
+          if (-not (Test-Path "$packageDir/bin/auric.exe")) {
+            throw "The staged Windows executable was not found"
+          }
+          Get-ChildItem -Recurse $packageDir
+          Compress-Archive -Path $packageDir -DestinationPath "dist/$packageName.zip"
+          $checkDir = Join-Path "dist" "archive-check"
+          Expand-Archive -Path "dist/$packageName.zip" -DestinationPath $checkDir -Force
+          Get-ChildItem -Recurse $checkDir
+          if (-not (Test-Path (Join-Path $checkDir "$packageName/bin/auric.exe"))) {
+            throw "The Windows archive does not contain the expected executable"
+          }
+
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: auric-${{ inputs.version }}-linux-x64
-          path: dist/auric-${{ inputs.version }}-linux-x64.tar.gz
+          name: auric-${{ inputs.version }}-${{ matrix.package_suffix }}
+          path: dist/auric-${{ inputs.version }}-${{ matrix.package_suffix }}.${{ matrix.archive_extension }}
           if-no-files-found: error
 
-      - name: Publish GitHub Release
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: auric-${{ inputs.version }}-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release packages
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -144,7 +232,6 @@ jobs:
           set -euo pipefail
           version="${{ inputs.version }}"
           tag="v${version}"
-          archive="dist/auric-${version}-linux-x64.tar.gz"
           release_flags=()
           if [[ "${{ inputs.draft }}" == "true" ]]; then
             release_flags+=(--draft)
@@ -153,11 +240,18 @@ jobs:
             release_flags+=(--prerelease)
           fi
 
+          mapfile -t archives < <(find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print | sort)
+          if [[ "${#archives[@]}" -ne 3 ]]; then
+            echo "Expected three release archives, found ${#archives[@]}"
+            find dist -maxdepth 2 -type f -print
+            exit 1
+          fi
+
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "$archive" --clobber
+            gh release upload "$tag" "${archives[@]}" --clobber
           else
-            gh release create "$tag" "$archive" \
+            gh release create "$tag" "${archives[@]}" \
               --title "Auric ${tag}" \
-              --notes "Linux x64 release package for Auric ${tag}." \
+              --notes "Portable Linux x64, Windows x64, and macOS arm64 packages for Auric ${tag}." \
               "${release_flags[@]}"
           fi

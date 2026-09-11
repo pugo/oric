@@ -62,7 +62,7 @@ int main(int argc, char *argv[])
 
     // Read config file.
     Config config;
-    
+
     // Read config from command line flags. Can override file config.
     if (! config.parse_command_line(argc, argv)) {
         return 1;

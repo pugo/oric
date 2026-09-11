@@ -40,6 +40,14 @@ If needed, run once before configure/build:
 C:\Users\dybvig\vcpkg\vcpkg.exe install
 ```
 
+## Portable release package
+
+The GitHub Release workflow publishes `auric-VERSION-windows-x64.zip`. Extract
+the archive, place the required ROM files in its `ROMS` directory, and run
+`bin\auric.exe` with the extracted package directory as the working directory.
+The archive includes the Windows runtime DLLs required by the build when they
+are dynamically linked.
+
 ## How the executable was run
 
 Working directory and command matter because the app uses relative paths (`auric.yaml`, `ROMS`, `images`, `fonts`).
